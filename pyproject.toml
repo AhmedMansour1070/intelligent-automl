@@ -1,0 +1,84 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "intelligent-automl"
+dynamic = ["version"]
+description = "The world's most intelligent automated machine learning framework"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Your Name", email = "your.email@example.com"},
+]
+maintainers = [
+    {name = "Your Name", email = "your.email@example.com"},
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+keywords = ["machine learning", "automl", "data preprocessing", "AI"]
+dependencies = [
+    "pandas>=1.3.0",
+    "numpy>=1.21.0",
+    "scikit-learn>=1.1.0",
+    "matplotlib>=3.5.0",
+    "seaborn>=0.11.0",
+    "joblib>=1.1.0",
+    "tqdm>=4.62.0",
+]
+requires-python = ">=3.8"
+
+[project.urls]
+"Homepage" = "https://github.com/yourusername/intelligent-automl"
+"Documentation" = "https://intelligent-automl.readthedocs.io"
+"Repository" = "https://github.com/yourusername/intelligent-automl"
+"Bug Tracker" = "https://github.com/yourusername/intelligent-automl/issues"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=22.0.0",
+    "flake8>=5.0.0",
+    "mypy>=0.991",
+]
+docs = [
+    "sphinx>=5.0.0",
+    "sphinx-rtd-theme>=1.0.0",
+]
+
+[project.scripts]
+intelligent-automl = "intelligent_automl.cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "intelligent_automl.version.__version__"}
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+include = '\.pyi?$'
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+strict = true
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q --strict-markers --strict-config"
+testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow",
+    "integration: marks tests as integration tests",
+]

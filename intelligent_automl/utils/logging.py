@@ -584,6 +584,49 @@ def log_performance(component: str, operation: str, execution_time: float, **kwa
     get_logger().log_performance(component, operation, execution_time, **kwargs)
 
 
+class FrameworkLogger:
+    """
+    Simple wrapper around AutoMLLogger for framework compatibility.
+    This provides the interface expected by the complete_framework.py
+    """
+    
+    def __init__(self, log_level: str = 'INFO', log_file: Optional[str] = None):
+        """Initialize framework logger."""
+        self.logger = AutoMLLogger(
+            name="intelligent_automl_framework",
+            level=log_level,
+            log_file=log_file,
+            log_to_console=True,
+            structured_logging=False  # Keep it simple for now
+        )
+    
+    def log_info(self, component: str, operation: str, message: str, **kwargs):
+        """Log info message."""
+        self.logger.log_operation(component, operation, message, level="INFO", **kwargs)
+    
+    def log_error(self, component: str, operation: str, error: Exception, **kwargs):
+        """Log error message."""
+        self.logger.log_error(component, operation, error, **kwargs)
+    
+    def log_warning(self, component: str, operation: str, message: str, **kwargs):
+        """Log warning message."""
+        self.logger.log_operation(component, operation, message, level="WARNING", **kwargs)
+    
+    def log_debug(self, component: str, operation: str, message: str, **kwargs):
+        """Log debug message."""
+        self.logger.log_operation(component, operation, message, level="DEBUG", **kwargs)
+    
+    def log_performance(self, component: str, operation: str, execution_time: float, **kwargs):
+        """Log performance metrics."""
+        self.logger.log_performance(component, operation, execution_time, **kwargs)
+
+
+# Also add this for backward compatibility
+def get_framework_logger(log_level: str = 'INFO') -> FrameworkLogger:
+    """Get a framework logger instance."""
+    return FrameworkLogger(log_level=log_level)
+
+
 # Example usage
 if __name__ == "__main__":
     # Configure logging
@@ -627,3 +670,4 @@ if __name__ == "__main__":
     metrics_tracker.export_metrics("test_metrics.json")
     
     print("✅ Logging system test completed!")
+

@@ -1,0 +1,38 @@
+INTELLIGENT AUTOML RESULTS SUMMARY
+==================================================
+
+Best Model: random_forest
+Best Score: 0.7910
+Task Type: classification
+Models Trained: 3
+
+All Model Scores:
+  - random_forest: 0.7910
+  - logistic_regression: 0.8023
+  - svm: 0.7850
+
+Top Metrics for random_forest:
+  - roc_auc: 0.8136 (higher_better)
+  - accuracy: 0.7933 (higher_better)
+  - recall_weighted: 0.7933 (higher_better)
+  - precision_weighted: 0.7912 (higher_better)
+  - f1_weighted: 0.7910 (higher_better)
+  - balanced_accuracy: 0.7724 (higher_better)
+  - average_precision: 0.7530 (higher_better)
+  - log_loss: 0.7025 (lower_better)
+  - matthews_corrcoef: 0.5573 (higher_better)
+
+Training Details:
+  - Training time: 0.15 seconds
+  - Memory usage: 0.27 MB
+
+Data Information:
+  - Original shape: (891, 9)
+  - Target column: Survived
+  - Memory usage: 0.01 MB
+
+Preprocessing Results:
+  - Features before: 8
+  - Features after: 29
+  - Processing time: 0.09 seconds
+  - Pipeline steps: outlier_handling, feature_engineering, missing_value_handling, categorical_encoding, feature_scaling

@@ -218,22 +218,23 @@ class IntelligentPipelineSelector:
         
         print(f"✅ Generated {len(recommendations)} recommendations")
         return recommendations
-    
-    def build_intelligent_pipeline(self) -> DataPipeline:
-        """
-        Build an optimized pipeline based on intelligent recommendations.
         
-        Returns:
-            Configured DataPipeline with optimal preprocessing steps
-        """
+    def build_intelligent_pipeline(self) -> DataPipeline:
+        """Build an optimized pipeline based on intelligent recommendations."""
         if not self.recommendations:
             self.generate_recommendations()
         
         print("🔧 Building intelligent pipeline...")
+        
+        # DEBUG: Print recommendations before sorting
+        print("DEBUG - Recommendations before sorting:")
+        for rec in self.recommendations:
+            print(f"  {rec.step_name}: priority={rec.priority}")
+        
         pipeline = DataPipeline()
         
         for rec in self.recommendations:
-            if rec.confidence >= 0.7:  # Only include high-confidence recommendations
+            if rec.confidence >= 0.7:
                 processor_class = self._get_processor_class(rec.processor_class)
                 processor = processor_class(**rec.parameters)
                 pipeline.add_step(rec.step_name, processor)
@@ -243,7 +244,6 @@ class IntelligentPipelineSelector:
         
         print(f"🚀 Intelligent pipeline built with {len(pipeline)} steps")
         return pipeline
-    
     def explain_recommendations(self) -> str:
         """
         Generate detailed explanation of why specific steps were recommended.
@@ -499,7 +499,7 @@ class IntelligentPipelineSelector:
             },
             reasoning=f"Missing data: {missing_pct:.1f}% with {pattern} pattern. {numeric_strategy.upper()} imputation recommended.",
             confidence=confidence,
-            priority=2
+            priority=3
         )
     
     def _recommend_outlier_handling(self) -> ProcessingRecommendation:
@@ -529,7 +529,7 @@ class IntelligentPipelineSelector:
             },
             reasoning=f"High outlier percentage ({outlier_pct:.1f}%) detected. IQR capping recommended.",
             confidence=confidence,
-            priority=3
+            priority=1
         )
     
     def _recommend_feature_engineering(self) -> ProcessingRecommendation:
@@ -549,7 +549,7 @@ class IntelligentPipelineSelector:
             },
             reasoning=f"Found {skewed_count} skewed features. Log/sqrt transforms recommended.",
             confidence=confidence,
-            priority=4
+            priority=2
         )
     
     def _recommend_categorical_encoding(self) -> ProcessingRecommendation:

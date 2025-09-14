@@ -38,99 +38,102 @@ class MissingValueHandler(DataProcessor):
     """
     
     def __init__(self, 
-                 numeric_strategy: str = 'mean',
-                 categorical_strategy: str = 'most_frequent',
-                 fill_value: Any = None,
-                 n_neighbors: int = 5):
-        """
-        Initialize the missing value handler.
-        
-        Args:
-            numeric_strategy: Strategy for numeric columns ('mean', 'median', 'constant', 'knn')
-            categorical_strategy: Strategy for categorical columns ('most_frequent', 'constant')
-            fill_value: Fill value when using 'constant' strategy
-            n_neighbors: Number of neighbors for KNN imputation
-        """
+                numeric_strategy: str = 'median',
+                categorical_strategy: str = 'most_frequent',
+                fill_value: Optional[Union[str, int, float]] = None,
+                n_neighbors: Optional[int] = None):
+        """Initialize the missing value handler."""
         self.numeric_strategy = numeric_strategy
         self.categorical_strategy = categorical_strategy
         self.fill_value = fill_value
         self.n_neighbors = n_neighbors
         
-        self.numeric_imputer: Optional[Union[SimpleImputer, KNNImputer]] = None
-        self.categorical_imputer: Optional[SimpleImputer] = None
+        # Initialize attributes that will be set during fit
         self.numeric_columns: List[str] = []
         self.categorical_columns: List[str] = []
+        self.numeric_stats: Dict[str, Dict[str, float]] = {}
+        self.categorical_stats: Dict[str, Dict[str, Any]] = {}
         self._fitted = False
-    
     @handle_sklearn_error
-    def fit(self, data: DataFrame) -> 'MissingValueHandler':
-        """
-        Fit the imputers to the data.
-        
-        Args:
-            data: Input DataFrame
-            
-        Returns:
-            Self for method chaining
-        """
-        # Identify column types
+    def fit(self, data: pd.DataFrame) -> 'MissingValueHandler':
+        """Fit the handler by computing imputation statistics."""
+        # Identify columns by type
         self.numeric_columns = data.select_dtypes(include=[np.number]).columns.tolist()
         self.categorical_columns = data.select_dtypes(include=['object', 'category']).columns.tolist()
         
-        # Fit numeric imputer
-        if self.numeric_columns:
-            if self.numeric_strategy == 'knn':
-                self.numeric_imputer = KNNImputer(n_neighbors=self.n_neighbors)
-            else:
-                self.numeric_imputer = SimpleImputer(
-                    strategy=self.numeric_strategy,
-                    fill_value=self.fill_value
-                )
-            self.numeric_imputer.fit(data[self.numeric_columns])
+        # Initialize stats dictionaries
+        self.numeric_stats = {}
+        self.categorical_stats = {}
         
-        # Fit categorical imputer
-        if self.categorical_columns:
-            self.categorical_imputer = SimpleImputer(
-                strategy=self.categorical_strategy,
-                fill_value=self.fill_value
-            )
-            categorical_data = data[self.categorical_columns].copy()
-            for col in self.categorical_columns:
-                categorical_data[col] = categorical_data[col].astype(str).replace('nan', np.nan)
-            self.categorical_imputer.fit(categorical_data)
-
-
+        # Compute numeric statistics for ALL numeric columns (not just those with missing values)
+        for col in self.numeric_columns:
+            self.numeric_stats[col] = {
+                'mean': data[col].mean(),
+                'median': data[col].median()
+            }
+        
+        # Compute categorical statistics for ALL categorical columns
+        for col in self.categorical_columns:
+            mode_val = data[col].mode()
+            self.categorical_stats[col] = {
+                'most_frequent': mode_val.iloc[0] if len(mode_val) > 0 else 'Unknown'
+            }
+        
         self._fitted = True
-        return self
-    
+        return self   
     @handle_sklearn_error
-    def transform(self, data: DataFrame) -> DataFrame:
-        """
-        Transform data by imputing missing values.
-        
-        Args:
-            data: Input DataFrame
-            
-        Returns:
-            DataFrame with missing values imputed
-        """
+    def transform(self, data: pd.DataFrame) -> pd.DataFrame:
         if not self._fitted:
             raise PreprocessingError("MissingValueHandler must be fitted before transform")
         
         data_copy = data.copy()
         
-        # Transform numeric columns
-        if self.numeric_columns and self.numeric_imputer is not None:
-            imputed_numeric = self.numeric_imputer.transform(data_copy[self.numeric_columns])
-            data_copy[self.numeric_columns] = imputed_numeric
+        # DEBUG: Print what columns have missing values
+        missing_cols = [col for col in data_copy.columns if data_copy[col].isnull().any()]
+        print(f"DEBUG - Columns with missing values: {missing_cols}")
+        print(f"DEBUG - Known numeric columns: {self.numeric_columns}")
+        print(f"DEBUG - Known categorical columns: {self.categorical_columns}")
         
-        # Transform categorical columns
-        if self.categorical_columns and self.categorical_imputer is not None:
-            imputed_categorical = self.categorical_imputer.transform(data_copy[self.categorical_columns])
-            data_copy[self.categorical_columns] = imputed_categorical
+        # Handle numeric columns
+        for col in self.numeric_columns:
+            if col in data_copy.columns and data_copy[col].isnull().any():
+                if self.numeric_strategy == 'mean':
+                    fill_value = self.numeric_stats[col]['mean']
+                elif self.numeric_strategy == 'median':
+                    fill_value = self.numeric_stats[col]['median']
+                else:
+                    fill_value = self.fill_value
+                
+                data_copy[col] = data_copy[col].fillna(fill_value)
+        
+        # Handle categorical columns  
+        for col in self.categorical_columns:
+            if col in data_copy.columns and data_copy[col].isnull().any():
+                if self.categorical_strategy == 'most_frequent':
+                    fill_value = self.categorical_stats[col]['most_frequent']
+                else:
+                    fill_value = self.fill_value
+                
+                data_copy[col] = data_copy[col].fillna(fill_value)
+        
+        for col in data_copy.columns:
+            if data_copy[col].isnull().any():
+                if data_copy[col].dtype in ['float64', 'int64', 'float32', 'int32']:
+                    # For numeric columns not handled above
+                    if col not in self.numeric_columns:
+                        fill_value = data_copy[col].median()
+                        if pd.isna(fill_value):  # If median is also NaN
+                            fill_value = 0
+                        data_copy[col] = data_copy[col].fillna(fill_value)
+                else:
+                    # For any remaining non-numeric columns
+                    if col not in self.categorical_columns:
+                        data_copy[col] = data_copy[col].fillna('Unknown')
+    
+        final_missing = data_copy.isnull().sum().sum()
+        print(f"DEBUG - Missing values after transform: {final_missing}")
         
         return data_copy
-    
     def get_params(self) -> Dict[str, Any]:
         """Get parameters of the processor."""
         return {
@@ -250,7 +253,7 @@ class FeatureScaler(DataProcessor):
 
 class CategoricalEncoder(DataProcessor):
     """
-    Fixed categorical encoder that properly handles pandas categorical types.
+    Fixed categorical encoder that properly handles ALL categorical columns.
     """
     
     def __init__(self, 
@@ -292,20 +295,51 @@ class CategoricalEncoder(DataProcessor):
             # For label encoding, we'll use a dict of LabelEncoders
             self.encoder = {}
         elif self.method == 'ordinal':
-            self.encoder = OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1)
+            self.encoder = OrdinalEncoder(
+                handle_unknown='use_encoded_value', 
+                unknown_value=-1
+            )
         else:
             raise PreprocessingError(f"Unknown encoding method: {self.method}")
+    
+    def _identify_categorical_columns(self, data: pd.DataFrame) -> List[str]:
+        """
+        Identify ALL categorical columns that need encoding.
+        
+        This is the key fix - we need to catch ALL non-numeric columns.
+        """
+        categorical_cols = []
+        
+        for col in data.columns:
+            # Check if column is categorical, object, or string type
+            if (pd.api.types.is_categorical_dtype(data[col]) or 
+                pd.api.types.is_object_dtype(data[col]) or
+                pd.api.types.is_string_dtype(data[col])):
+                categorical_cols.append(col)
+            # Also check if it's numeric but should be treated as categorical
+            elif pd.api.types.is_numeric_dtype(data[col]):
+                # If it has very few unique values, might be categorical
+                unique_ratio = data[col].nunique() / len(data)
+                if unique_ratio < 0.05 and data[col].nunique() < 20:
+                    categorical_cols.append(col)
+        
+        return categorical_cols
     
     def _convert_categorical_to_object(self, data: pd.DataFrame) -> pd.DataFrame:
         """Convert pandas categorical columns to object type for consistent handling."""
         data_copy = data.copy()
         
-        for col in data_copy.columns:
-            if pd.api.types.is_categorical_dtype(data_copy[col]):
-                # Convert categorical to string, preserving NaN values
-                data_copy[col] = data_copy[col].astype(str)
-                # Replace 'nan' strings back to actual NaN
-                data_copy[col] = data_copy[col].replace('nan', np.nan)
+        for col in self.categorical_columns:
+            if col in data_copy.columns:
+                if pd.api.types.is_categorical_dtype(data_copy[col]):
+                    # Convert categorical to string, preserving NaN values
+                    data_copy[col] = data_copy[col].astype(str)
+                    # Replace 'nan' strings back to actual NaN
+                    data_copy[col] = data_copy[col].replace('nan', np.nan)
+                else:
+                    # Ensure it's string type
+                    data_copy[col] = data_copy[col].astype(str)
+                    data_copy[col] = data_copy[col].replace('nan', np.nan)
         
         return data_copy
     
@@ -320,32 +354,42 @@ class CategoricalEncoder(DataProcessor):
         Returns:
             Self for method chaining
         """
-        # Convert data for consistent handling
-        data_processed = self._convert_categorical_to_object(data)
-        
-        # Find categorical columns
-        self.categorical_columns = data_processed.select_dtypes(include=['object']).columns.tolist()
+        # CRITICAL FIX: Identify ALL categorical columns
+        self.categorical_columns = self._identify_categorical_columns(data)
         
         if not self.categorical_columns:
+            print(f"  ⚠️ No categorical columns found for encoding")
             self._fitted = True
             return self
+        
+        print(f"  🔍 Found categorical columns: {self.categorical_columns}")
+        
+        # Convert data for consistent handling
+        data_processed = self._convert_categorical_to_object(data)
         
         # Filter categories based on max_categories
         if self.max_categories:
             filtered_columns = []
             for col in self.categorical_columns:
-                if data_processed[col].nunique() <= self.max_categories:
-                    filtered_columns.append(col)
+                if col in data_processed.columns:
+                    unique_count = data_processed[col].nunique()
+                    if unique_count <= self.max_categories:
+                        filtered_columns.append(col)
+                    else:
+                        print(f"  ⚠️ Skipping high cardinality column '{col}' ({unique_count} categories)")
             self.categorical_columns = filtered_columns
         
         if not self.categorical_columns:
+            print(f"  ⚠️ No categorical columns remain after filtering")
             self._fitted = True
             return self
         
         # Fit encoder based on method
+        categorical_data = data_processed[self.categorical_columns]
+        
         if self.method == 'onehot':
             # Fill NaN values temporarily for fitting
-            data_for_fitting = data_processed[self.categorical_columns].fillna('__MISSING__')
+            data_for_fitting = categorical_data.fillna('__MISSING__')
             self.encoder.fit(data_for_fitting)
             self.encoded_feature_names = self.encoder.get_feature_names_out(self.categorical_columns).tolist()
             
@@ -353,16 +397,37 @@ class CategoricalEncoder(DataProcessor):
             for col in self.categorical_columns:
                 le = LabelEncoder()
                 # Get unique values excluding NaN
-                unique_values = data_processed[col].dropna().astype(str).unique()
-                le.fit(unique_values)
-                self.encoder[col] = le
+                unique_values = categorical_data[col].dropna().astype(str).unique()
+                if len(unique_values) > 0:
+                    le.fit(unique_values)
+                    self.encoder[col] = le
+                else:
+                    print(f"  ⚠️ Column '{col}' has no valid values for label encoding")
                 
         elif self.method == 'ordinal':
             # Fill NaN values temporarily for fitting
-            data_for_fitting = data_processed[self.categorical_columns].fillna('__MISSING__')
+            data_for_fitting = categorical_data.fillna('__MISSING__')
             self.encoder.fit(data_for_fitting)
         
+        print(f"  ✅ Fitted {self.method} encoder for {len(self.categorical_columns)} columns")
         self._fitted = True
+        return self
+    def get_params(self) -> Dict[str, Any]:
+        """Get parameters of the processor."""
+        return {
+            'method': self.method,
+            'handle_unknown': self.handle_unknown,
+            'drop_first': self.drop_first,
+            'max_categories': self.max_categories
+        }
+    def set_params(self, **params) -> 'CategoricalEncoder':
+        """Set parameters of the processor."""
+        for param, value in params.items():
+            if hasattr(self, param):
+                setattr(self, param, value)
+        
+        self._init_encoder()
+        self._fitted = False
         return self
     
     @handle_sklearn_error
@@ -385,9 +450,12 @@ class CategoricalEncoder(DataProcessor):
         # Convert data for consistent handling
         data_copy = self._convert_categorical_to_object(data)
         
+        # Get categorical data
+        categorical_data = data_copy[self.categorical_columns]
+        
         if self.method == 'onehot':
             # One-hot encoding
-            data_for_encoding = data_copy[self.categorical_columns].fillna('__MISSING__')
+            data_for_encoding = categorical_data.fillna('__MISSING__')
             encoded_data = self.encoder.transform(data_for_encoding)
             encoded_df = pd.DataFrame(
                 encoded_data,
@@ -402,53 +470,75 @@ class CategoricalEncoder(DataProcessor):
         elif self.method == 'label':
             # Label encoding
             for col in self.categorical_columns:
-                # Handle unknown categories and NaN values
-                col_data = data_copy[col].astype(str)
-                
-                # Create a mask for known categories
-                known_mask = col_data.isin(self.encoder[col].classes_)
-                nan_mask = data_copy[col].isna()
-                
-                # Initialize with -1 (unknown category marker)
-                encoded_values = np.full(len(col_data), -1, dtype=int)
-                
-                # Encode known categories
-                if known_mask.any():
-                    encoded_values[known_mask] = self.encoder[col].transform(col_data[known_mask])
-                
-                # Handle NaN values (set to -2 to distinguish from unknown categories)
-                if nan_mask.any():
-                    encoded_values[nan_mask] = -2
-                
-                data_copy[col] = encoded_values
+                if col in self.encoder:
+                    # Handle unknown categories and NaN values
+                    col_data = categorical_data[col].astype(str)
+                    
+                    # Create a mask for known categories
+                    known_mask = col_data.isin(self.encoder[col].classes_)
+                    nan_mask = categorical_data[col].isna()
+                    
+                    # Initialize with -1 (unknown category marker)
+                    encoded_values = np.full(len(col_data), -1, dtype=int)
+                    
+                    # Encode known categories
+                    if known_mask.any():
+                        encoded_values[known_mask] = self.encoder[col].transform(col_data[known_mask])
+                    
+                    # Handle NaN values (set to -2 to distinguish from unknown categories)
+                    if nan_mask.any():
+                        encoded_values[nan_mask] = -2
+                    
+                    data_copy[col] = encoded_values
                 
         elif self.method == 'ordinal':
             # Ordinal encoding
-            data_for_encoding = data_copy[self.categorical_columns].fillna('__MISSING__')
+            data_for_encoding = categorical_data.fillna('__MISSING__')
             encoded_data = self.encoder.transform(data_for_encoding)
             data_copy[self.categorical_columns] = encoded_data
         
+        # CRITICAL: Ensure NO string columns remain
+        for col in data_copy.columns:
+            if data_copy[col].dtype == 'object':
+                # If we still have object columns, try to convert them
+                try:
+                    data_copy[col] = pd.to_numeric(data_copy[col], errors='coerce')
+                except:
+                    # If conversion fails, drop the column with warning
+                    print(f"  ⚠️ Dropping problematic column '{col}' with non-numeric data")
+                    data_copy = data_copy.drop(columns=[col])
+        
+        for col in data_copy.columns:
+            if (data_copy[col].dtype == 'object' or 
+                pd.api.types.is_categorical_dtype(data_copy[col])):
+                
+                print(f"  ⚠️ Force encoding remaining categorical column '{col}'")
+                # Safe categorical encoding that doesn't create NaN values
+                codes = pd.Categorical(data_copy[col]).codes
+                # Replace any -1 values (unknown categories) with a safe value
+                codes = np.where(codes == -1, 0, codes)
+                data_copy[col] = codes
+                
+        # Final safety check - convert any remaining object columns
+        for col in data_copy.columns:
+            if data_copy[col].dtype == 'object':
+                try:
+                    data_copy[col] = pd.to_numeric(data_copy[col], errors='coerce')
+                    data_copy[col] = data_copy[col].fillna(-999)
+                except:
+                    print(f"  ❌ Dropping problematic column '{col}'")
+                    data_copy = data_copy.drop(columns=[col])
+        
+        final_missing = data_copy.isnull().sum().sum()
+        print(f"DEBUG CATEGORICAL - Missing values after encoding: {final_missing}")
+        if final_missing > 0:
+            for col in data_copy.columns:
+                if data_copy[col].isnull().any():
+                    print(f"DEBUG CATEGORICAL - Column '{col}' has {data_copy[col].isnull().sum()} missing values")
+    
+        return data_copy
         return data_copy
     
-    def get_params(self) -> Dict[str, Any]:
-        """Get parameters of the processor."""
-        return {
-            'method': self.method,
-            'handle_unknown': self.handle_unknown,
-            'drop_first': self.drop_first,
-            'max_categories': self.max_categories
-        }
-    
-    def set_params(self, **params) -> 'CategoricalEncoder':
-        """Set parameters of the processor."""
-        for param, value in params.items():
-            if hasattr(self, param):
-                setattr(self, param, value)
-        
-        self._init_encoder()
-        self._fitted = False
-        return self
-
 class OutlierHandler(DataProcessor):
     """
     Handles outliers in numeric features using various detection and treatment methods.
@@ -660,7 +750,7 @@ class FeatureEngineering(DataProcessor):
             for col in self.sqrt_columns:
                 data_copy[f'{col}_sqrt'] = np.sqrt(data_copy[col])
         
-        return data_copy
+        return data_copy    
     
     def get_params(self) -> Dict[str, Any]:
         """Get parameters of the processor."""
@@ -679,7 +769,6 @@ class FeatureEngineering(DataProcessor):
                 setattr(self, param, value)
         self._fitted = False
         return self
-
 
 
 class DateTimeProcessor(DataProcessor):

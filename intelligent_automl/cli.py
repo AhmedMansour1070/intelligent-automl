@@ -492,7 +492,7 @@ def automl(ctx, data_file, target, output, config):
                 'target_column': target,
                 'preprocessing_steps': len(pipeline),
                 'final_features': processed_features.shape[1],
-                'best_model': training_summary['best_model'],
+                'best_model': training_summary.get('best_model', 'No model trained successfully'),
                 'best_score': training_summary['best_score']
             }
             

@@ -1,10 +1,7 @@
-# ===================================
-# FILE: automl_framework/core/config.py
-# LOCATION: /automl_framework/automl_framework/core/config.py
-# ===================================
+# intelligent_automl/core/config.py
 
 """
-Configuration management for the AutoML framework.
+Enhanced Configuration management for the AutoML framework with Multi-Metric Support.
 
 This module provides type-safe configuration classes using dataclasses
 and validation logic to ensure configurations are valid.
@@ -13,7 +10,7 @@ and validation logic to ensure configurations are valid.
 import json
 import yaml
 from dataclasses import dataclass, field, asdict
-from typing import Dict, Any, Optional, List, Union
+from typing import Dict, Any, Optional, List, Union, Callable
 from pathlib import Path
 
 from .exceptions import ConfigurationError
@@ -43,9 +40,6 @@ class DataConfig:
         
         if self.test_size + self.validation_size >= 1:
             raise ConfigurationError("test_size + validation_size must be < 1")
-        
-        if not Path(self.file_path).exists():
-            raise ConfigurationError(f"Data file not found: {self.file_path}")
         
         if self.handle_missing_target not in ['drop', 'impute']:
             raise ConfigurationError("handle_missing_target must be 'drop' or 'impute'")
@@ -117,32 +111,203 @@ class ModelConfig:
 
 
 @dataclass
+class MetricConfig:
+    """Configuration for individual metrics."""
+    name: str
+    weight: float = 1.0  # Weight for ensemble scoring
+    enabled: bool = True
+    parameters: Dict[str, Any] = field(default_factory=dict)
+    
+    def __post_init__(self):
+        if self.weight < 0:
+            raise ValueError("Metric weight must be non-negative")
+
+
+@dataclass
+class EvaluationConfig:
+    """Enhanced configuration for comprehensive model evaluation."""
+    
+    # Multi-metric configuration
+    metrics: List[Union[str, MetricConfig]] = field(default_factory=list)
+    primary_metric: Optional[str] = None  # Main metric for model selection
+    custom_metrics: Dict[str, Any] = field(default_factory=dict)
+    
+    # Evaluation strategy
+    cross_validation: bool = True
+    cv_folds: int = 5
+    cv_strategy: str = 'kfold'  # 'kfold', 'stratified', 'time_series'
+    holdout_evaluation: bool = True
+    holdout_size: float = 0.2
+    
+    # Bootstrap and confidence intervals
+    bootstrap_samples: int = 0  # 0 means no bootstrap
+    confidence_level: float = 0.95
+    
+    # Output configuration
+    save_predictions: bool = True
+    save_feature_importance: bool = True
+    save_learning_curves: bool = False
+    save_confusion_matrix: bool = True  # For classification
+    save_residual_plots: bool = True   # For regression
+    
+    # Advanced evaluation options
+    enable_comprehensive_metrics: bool = True  # Use all available metrics
+    enable_probabilistic_metrics: bool = True  # ROC-AUC, log-loss, etc.
+    enable_fairness_metrics: bool = False     # Fairness and bias metrics
+    
+    # Multi-objective optimization
+    enable_multi_objective: bool = False
+    pareto_optimization: bool = False
+    metric_weights: Dict[str, float] = field(default_factory=dict)
+    
+    def __post_init__(self):
+        """Validate and process evaluation configuration."""
+        # Ensure we have some metrics
+        if not self.metrics and self.enable_comprehensive_metrics:
+            # Will be auto-populated based on task type
+            pass
+        elif not self.metrics:
+            raise ValueError("Must specify metrics or enable comprehensive_metrics")
+        
+        # Validate CV configuration
+        if self.cv_folds < 2:
+            raise ValueError("cv_folds must be >= 2")
+        
+        valid_cv_strategies = ['kfold', 'stratified', 'time_series', 'group']
+        if self.cv_strategy not in valid_cv_strategies:
+            raise ValueError(f"cv_strategy must be one of {valid_cv_strategies}")
+        
+        # Validate holdout size
+        if not 0 < self.holdout_size < 1:
+            raise ValueError("holdout_size must be between 0 and 1")
+        
+        # Validate confidence level
+        if not 0 < self.confidence_level < 1:
+            raise ValueError("confidence_level must be between 0 and 1")
+        
+        # Process metrics to MetricConfig objects
+        self._process_metrics()
+    
+    def _process_metrics(self):
+        """Convert string metrics to MetricConfig objects."""
+        processed_metrics = []
+        
+        for metric in self.metrics:
+            if isinstance(metric, str):
+                processed_metrics.append(MetricConfig(name=metric))
+            elif isinstance(metric, MetricConfig):
+                processed_metrics.append(metric)
+            elif isinstance(metric, dict):
+                processed_metrics.append(MetricConfig(**metric))
+            else:
+                raise ValueError(f"Invalid metric specification: {metric}")
+        
+        self.metrics = processed_metrics
+    
+    def get_metric_names(self) -> List[str]:
+        """Get list of metric names."""
+        return [m.name for m in self.metrics if m.enabled]
+    
+    def get_enabled_metrics(self) -> List[MetricConfig]:
+        """Get list of enabled metrics."""
+        return [m for m in self.metrics if m.enabled]
+    
+    def set_task_defaults(self, task_type: str):
+        """Set default metrics based on task type."""
+        if not self.metrics and self.enable_comprehensive_metrics:
+            if task_type == 'classification':
+                default_metrics = [
+                    'accuracy', 'balanced_accuracy', 'f1_weighted', 
+                    'precision_weighted', 'recall_weighted', 'matthews_corrcoef'
+                ]
+                if self.enable_probabilistic_metrics:
+                    default_metrics.extend(['roc_auc', 'average_precision', 'log_loss'])
+            else:  # regression
+                default_metrics = [
+                    'r2', 'explained_variance', 'mae', 'mse', 'rmse', 'mape'
+                ]
+            
+            self.metrics = [MetricConfig(name=metric) for metric in default_metrics]
+        
+        # Set primary metric if not specified
+        if not self.primary_metric:
+            if task_type == 'classification':
+                self.primary_metric = 'f1_weighted'
+            else:
+                self.primary_metric = 'r2'
+
+
+@dataclass
 class OptimizationConfig:
-    """Configuration for hyperparameter optimization."""
+    """Enhanced configuration for hyperparameter optimization with multi-metric support."""
     
     enabled: bool = False
     method: str = 'random'  # 'grid', 'random', 'bayesian', 'optuna'
     n_trials: int = 50
     timeout_minutes: Optional[int] = None
-    metric: str = 'accuracy'  # for classification: 'accuracy', 'f1', 'roc_auc'
-                              # for regression: 'r2', 'mse', 'mae'
-    direction: str = 'maximize'  # 'maximize' or 'minimize'
+    
+    # Multi-objective optimization
+    optimization_metrics: List[str] = field(default_factory=list)  # Multiple metrics to optimize
+    primary_metric: str = 'accuracy'  # Primary metric for single-objective
+    optimization_direction: Dict[str, str] = field(default_factory=dict)  # per-metric direction
+    
+    # Advanced optimization
+    multi_objective: bool = False
+    pareto_optimization: bool = False
+    scalarization_method: str = 'weighted_sum'  # 'weighted_sum', 'tchebycheff', 'augmented_tchebycheff'
+    metric_weights: Dict[str, float] = field(default_factory=dict)
+    
+    # Search configuration
     search_space: Dict[str, Any] = field(default_factory=dict)
     early_stopping: bool = True
     early_stopping_rounds: int = 10
+    early_stopping_metric: Optional[str] = None
+    
+    # Advanced features
+    pruning: bool = True  # For Optuna
+    sampler: str = 'tpe'  # 'tpe', 'cmaes', 'random'
     
     def __post_init__(self):
         """Validate optimization configuration."""
         valid_methods = ['grid', 'random', 'bayesian', 'optuna']
         if self.method not in valid_methods:
-            raise ConfigurationError(f"optimization method must be one of {valid_methods}")
+            raise ValueError(f"optimization method must be one of {valid_methods}")
         
         if self.n_trials < 1:
-            raise ConfigurationError("n_trials must be >= 1")
+            raise ValueError("n_trials must be >= 1")
         
-        valid_directions = ['maximize', 'minimize']
-        if self.direction not in valid_directions:
-            raise ConfigurationError(f"direction must be one of {valid_directions}")
+        valid_scalarization = ['weighted_sum', 'tchebycheff', 'augmented_tchebycheff']
+        if self.scalarization_method not in valid_scalarization:
+            raise ValueError(f"scalarization_method must be one of {valid_scalarization}")
+        
+        # Set up multi-objective if multiple metrics specified
+        if len(self.optimization_metrics) > 1:
+            self.multi_objective = True
+        elif len(self.optimization_metrics) == 1:
+            self.primary_metric = self.optimization_metrics[0]
+        
+        # Validate metric weights sum to 1 for weighted methods
+        if self.metric_weights and self.scalarization_method == 'weighted_sum':
+            total_weight = sum(self.metric_weights.values())
+            if abs(total_weight - 1.0) > 1e-6:
+                raise ValueError("Metric weights must sum to 1.0 for weighted_sum scalarization")
+    
+    def get_optimization_direction(self, metric: str) -> str:
+        """Get optimization direction for a metric."""
+        return self.optimization_direction.get(metric, 'maximize')
+    
+    def set_task_defaults(self, task_type: str):
+        """Set default optimization configuration based on task type."""
+        if not self.optimization_metrics:
+            if task_type == 'classification':
+                self.optimization_metrics = ['f1_weighted']
+                self.optimization_direction = {'f1_weighted': 'maximize'}
+            else:
+                self.optimization_metrics = ['r2']
+                self.optimization_direction = {'r2': 'maximize'}
+        
+        if not self.early_stopping_metric:
+            self.early_stopping_metric = self.primary_metric
 
 
 @dataclass
@@ -177,29 +342,38 @@ class TrainingConfig:
 
 
 @dataclass
-class EvaluationConfig:
-    """Configuration for model evaluation."""
+class ModelComparisonConfig:
+    """Configuration for comparing multiple models with multiple metrics."""
     
-    metrics: List[str] = field(default_factory=lambda: ['accuracy'])
-    custom_metrics: Dict[str, Any] = field(default_factory=dict)
-    cross_validation: bool = True
-    holdout_evaluation: bool = True
-    bootstrap_samples: int = 0  # 0 means no bootstrap
-    confidence_level: float = 0.95
-    save_predictions: bool = True
-    save_feature_importance: bool = True
-    save_learning_curves: bool = False
+    enable_model_comparison: bool = True
+    models_to_compare: List[str] = field(default_factory=list)
+    
+    # Comparison methods
+    statistical_tests: bool = True
+    test_type: str = 'wilcoxon'  # 'wilcoxon', 'friedman', 'ttest'
+    significance_level: float = 0.05
+    
+    # Ranking and selection
+    ranking_method: str = 'pareto'  # 'pareto', 'weighted_sum', 'borda_count'
+    consensus_ranking: bool = True
+    
+    # Visualization
+    generate_comparison_plots: bool = True
+    radar_charts: bool = True
+    performance_profiles: bool = True
     
     def __post_init__(self):
-        """Validate evaluation configuration."""
-        if not self.metrics:
-            raise ConfigurationError("At least one metric must be specified")
+        """Validate model comparison configuration."""
+        valid_tests = ['wilcoxon', 'friedman', 'ttest', 'mcnemar']
+        if self.test_type not in valid_tests:
+            raise ValueError(f"test_type must be one of {valid_tests}")
         
-        if not 0 < self.confidence_level < 1:
-            raise ConfigurationError("confidence_level must be between 0 and 1")
+        valid_ranking = ['pareto', 'weighted_sum', 'borda_count', 'topsis']
+        if self.ranking_method not in valid_ranking:
+            raise ValueError(f"ranking_method must be one of {valid_ranking}")
         
-        if self.bootstrap_samples < 0:
-            raise ConfigurationError("bootstrap_samples must be >= 0")
+        if not 0 < self.significance_level < 1:
+            raise ValueError("significance_level must be between 0 and 1")
 
 
 @dataclass
@@ -231,123 +405,239 @@ class LoggingConfig:
 
 @dataclass
 class AutoMLConfig:
-    """Main configuration class that combines all sub-configurations."""
+    """Enhanced AutoML configuration with comprehensive multi-metric support."""
     
-    data: DataConfig
-    preprocessing: PreprocessingConfig = field(default_factory=PreprocessingConfig)
-    model: ModelConfig = field(default_factory=lambda: ModelConfig(model_type='random_forest'))
-    optimization: OptimizationConfig = field(default_factory=OptimizationConfig)
-    training: TrainingConfig = field(default_factory=TrainingConfig)
-    evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
-    logging: LoggingConfig = field(default_factory=LoggingConfig)
+    # Core configuration sections
+    data: 'DataConfig'
+    model: 'ModelConfig' 
+    training: 'TrainingConfig'
+    evaluation: EvaluationConfig
+    optimization: OptimizationConfig
+    model_comparison: ModelComparisonConfig = field(default_factory=ModelComparisonConfig)
+    
+    # Global settings
+    task_type: Optional[str] = None  # Auto-detected if None
+    random_seed: int = 42
+    verbose: bool = True
+    log_level: str = 'INFO'
+    
+    # Output configuration
+    output_dir: str = './automl_results'
+    save_models: bool = True
+    save_reports: bool = True
+    save_visualizations: bool = True
+    
+    def __post_init__(self):
+        """Post-initialization processing."""
+        # Auto-detect task type if not specified
+        if self.task_type is None:
+            self.task_type = self._detect_task_type()
+        
+        # Set task-specific defaults
+        if self.task_type:
+            self.evaluation.set_task_defaults(self.task_type)
+            self.optimization.set_task_defaults(self.task_type)
+    
+    def _detect_task_type(self) -> Optional[str]:
+        """Detect task type from metrics configuration."""
+        classification_metrics = {
+            'accuracy', 'precision', 'recall', 'f1', 'roc_auc', 
+            'balanced_accuracy', 'matthews_corrcoef', 'cohen_kappa'
+        }
+        regression_metrics = {
+            'r2', 'mse', 'mae', 'rmse', 'explained_variance', 'mape'
+        }
+        
+        # Check evaluation metrics
+        eval_metric_names = self.evaluation.get_metric_names()
+        opt_metrics = set(self.optimization.optimization_metrics)
+        all_metrics = set(eval_metric_names) | opt_metrics
+        
+        has_classification = bool(all_metrics & classification_metrics)
+        has_regression = bool(all_metrics & regression_metrics)
+        
+        if has_classification and not has_regression:
+            return 'classification'
+        elif has_regression and not has_classification:
+            return 'regression'
+        else:
+            return None  # Ambiguous or no clear indication
+    
+    @classmethod
+    def create_default(cls, task_type: str = 'classification') -> 'AutoMLConfig':
+        """Create a default configuration for a specific task type."""
+        # Default evaluation config with comprehensive metrics
+        evaluation = EvaluationConfig(
+            enable_comprehensive_metrics=True,
+            enable_probabilistic_metrics=True,
+            cross_validation=True,
+            cv_folds=5,
+            save_predictions=True,
+            save_feature_importance=True
+        )
+        
+        # Default optimization config
+        optimization = OptimizationConfig(
+            enabled=True,
+            method='optuna',
+            n_trials=100,
+            multi_objective=False,
+            early_stopping=True
+        )
+        
+        # Model comparison config
+        model_comparison = ModelComparisonConfig(
+            enable_model_comparison=True,
+            statistical_tests=True,
+            generate_comparison_plots=True
+        )
+        
+        config = cls(
+            data=DataConfig(file_path='', target_column=''),
+            model=ModelConfig(model_type='auto'),
+            training=TrainingConfig(),
+            evaluation=evaluation,
+            optimization=optimization,
+            model_comparison=model_comparison,
+            task_type=task_type
+        )
+        
+        return config
+    
+    @classmethod
+    def create_multi_objective(cls, 
+                             task_type: str, 
+                             metrics: List[str],
+                             weights: Optional[Dict[str, float]] = None) -> 'AutoMLConfig':
+        """Create a configuration for multi-objective optimization."""
+        config = cls.create_default(task_type)
+        
+        # Set up multi-objective optimization
+        config.optimization.multi_objective = True
+        config.optimization.optimization_metrics = metrics
+        config.optimization.pareto_optimization = True
+        
+        if weights:
+            config.optimization.metric_weights = weights
+            config.optimization.scalarization_method = 'weighted_sum'
+        
+        # Set evaluation metrics to match optimization metrics
+        config.evaluation.metrics = [MetricConfig(name=metric) for metric in metrics]
+        config.evaluation.enable_multi_objective = True
+        
+        return config
+    
+    def validate(self) -> List[str]:
+        """Validate the entire configuration and return any issues."""
+        errors = []
+        
+        try:
+            # Validate task type consistency
+            if self.task_type:
+                detected_type = self._detect_task_type()
+                if detected_type and detected_type != self.task_type:
+                    errors.append(f"Task type mismatch: specified {self.task_type}, detected {detected_type}")
+            
+            # Validate metric consistency between evaluation and optimization
+            eval_metrics = set(self.evaluation.get_metric_names())
+            opt_metrics = set(self.optimization.optimization_metrics)
+            
+            if opt_metrics and not opt_metrics.issubset(eval_metrics):
+                missing = opt_metrics - eval_metrics
+                errors.append(f"Optimization metrics not in evaluation metrics: {missing}")
+            
+            # Validate multi-objective configuration
+            if self.optimization.multi_objective:
+                if len(self.optimization.optimization_metrics) < 2:
+                    errors.append("Multi-objective optimization requires at least 2 metrics")
+                
+                if self.optimization.metric_weights:
+                    weight_metrics = set(self.optimization.metric_weights.keys())
+                    if not weight_metrics.issubset(opt_metrics):
+                        missing = weight_metrics - opt_metrics
+                        errors.append(f"Metric weights specified for non-optimization metrics: {missing}")
+            
+            # Validate directory paths
+            output_path = Path(self.output_dir)
+            try:
+                output_path.mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                errors.append(f"Cannot create output directory {self.output_dir}: {str(e)}")
+        
+        except Exception as e:
+            errors.append(f"Configuration validation error: {str(e)}")
+        
+        return errors
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert configuration to dictionary."""
         return asdict(self)
     
-    def to_json(self, filepath: str) -> None:
+    def save_json(self, filepath: str):
         """Save configuration to JSON file."""
         with open(filepath, 'w') as f:
-            json.dump(self.to_dict(), f, indent=2)
+            json.dump(self.to_dict(), f, indent=2, default=str)
     
-    def to_yaml(self, filepath: str) -> None:
+    def save_yaml(self, filepath: str):
         """Save configuration to YAML file."""
         with open(filepath, 'w') as f:
             yaml.dump(self.to_dict(), f, default_flow_style=False)
     
     @classmethod
-    def from_dict(cls, config_dict: Dict[str, Any]) -> 'AutoMLConfig':
-        """Create configuration from dictionary."""
-        return cls(
-            data=DataConfig(**config_dict['data']),
-            preprocessing=PreprocessingConfig(**config_dict.get('preprocessing', {})),
-            model=ModelConfig(**config_dict['model']),
-            optimization=OptimizationConfig(**config_dict.get('optimization', {})),
-            training=TrainingConfig(**config_dict.get('training', {})),
-            evaluation=EvaluationConfig(**config_dict.get('evaluation', {})),
-            logging=LoggingConfig(**config_dict.get('logging', {}))
-        )
-    
-    @classmethod
-    def from_json(cls, filepath: str) -> 'AutoMLConfig':
+    def load_json(cls, filepath: str) -> 'AutoMLConfig':
         """Load configuration from JSON file."""
         with open(filepath, 'r') as f:
             config_dict = json.load(f)
         return cls.from_dict(config_dict)
     
     @classmethod
-    def from_yaml(cls, filepath: str) -> 'AutoMLConfig':
+    def load_yaml(cls, filepath: str) -> 'AutoMLConfig':
         """Load configuration from YAML file."""
         with open(filepath, 'r') as f:
             config_dict = yaml.safe_load(f)
         return cls.from_dict(config_dict)
     
-    def validate(self) -> List[str]:
-        """
-        Validate the entire configuration and return any issues.
-        
-        Returns:
-            List of validation error messages (empty if valid)
-        """
-        errors = []
-        
-        try:
-            # Check if model type is supported for ensemble
-            if self.model.ensemble_method and not self.model.ensemble_models:
-                errors.append("ensemble_models must be specified when using ensemble_method")
-            
-            # Check optimization metric compatibility
-            if self.optimization.enabled:
-                classification_metrics = ['accuracy', 'f1', 'precision', 'recall', 'roc_auc']
-                regression_metrics = ['r2', 'mse', 'mae', 'rmse']
-                
-                # This would need task type detection logic
-                # For now, just check if metric is known
-                all_metrics = classification_metrics + regression_metrics
-                if self.optimization.metric not in all_metrics:
-                    errors.append(f"Unknown optimization metric: {self.optimization.metric}")
-            
-            # Check evaluation metrics
-            known_metrics = ['accuracy', 'precision', 'recall', 'f1', 'roc_auc', 
-                           'r2', 'mse', 'mae', 'rmse']
-            for metric in self.evaluation.metrics:
-                if metric not in known_metrics:
-                    errors.append(f"Unknown evaluation metric: {metric}")
-            
-        except Exception as e:
-            errors.append(f"Configuration validation error: {str(e)}")
-        
-        return errors
+    @classmethod
+    def from_dict(cls, config_dict: Dict[str, Any]) -> 'AutoMLConfig':
+        """Create configuration from dictionary."""
+        # This would need proper implementation to handle nested dataclasses
+        # For now, simplified version
+        return cls(**config_dict)
+
+
+# Example configurations for different use cases
+def create_classification_config() -> AutoMLConfig:
+    """Example configuration for classification with comprehensive metrics."""
+    return AutoMLConfig.create_default('classification')
+
+
+def create_regression_config() -> AutoMLConfig:
+    """Example configuration for regression with comprehensive metrics."""
+    return AutoMLConfig.create_default('regression')
+
+
+def create_multi_objective_classification() -> AutoMLConfig:
+    """Example multi-objective classification configuration."""
+    metrics = ['f1_weighted', 'precision_weighted', 'roc_auc']
+    weights = {'f1_weighted': 0.5, 'precision_weighted': 0.3, 'roc_auc': 0.2}
+    return AutoMLConfig.create_multi_objective('classification', metrics, weights)
+
+
+def create_comprehensive_evaluation_config() -> AutoMLConfig:
+    """Configuration with all available metrics enabled."""
+    config = AutoMLConfig.create_default('classification')
     
-    def get_model_params(self) -> Dict[str, Any]:
-        """Get model-specific parameters for the configured model type."""
-        base_params = self.model.hyperparameters.copy()
-        base_params.update({
-            'random_state': self.training.random_seed,
-            'n_jobs': self.training.n_jobs if self.training.n_jobs != -1 else None
-        })
-        return base_params
+    # Enable all advanced features
+    config.evaluation.enable_comprehensive_metrics = True
+    config.evaluation.enable_probabilistic_metrics = True
+    config.evaluation.enable_fairness_metrics = True
+    config.evaluation.bootstrap_samples = 1000
+    config.evaluation.save_learning_curves = True
+    config.evaluation.save_confusion_matrix = True
     
-    def is_classification_task(self) -> Optional[bool]:
-        """
-        Determine if this is a classification task based on metrics.
-        
-        Returns:
-            True if classification, False if regression, None if ambiguous
-        """
-        classification_metrics = {'accuracy', 'precision', 'recall', 'f1', 'roc_auc'}
-        regression_metrics = {'r2', 'mse', 'mae', 'rmse'}
-        
-        eval_metrics = set(self.evaluation.metrics)
-        opt_metric = {self.optimization.metric} if self.optimization.enabled else set()
-        all_metrics = eval_metrics | opt_metric
-        
-        has_classification = bool(all_metrics & classification_metrics)
-        has_regression = bool(all_metrics & regression_metrics)
-        
-        if has_classification and not has_regression:
-            return True
-        elif has_regression and not has_classification:
-            return False
-        else:
-            return None  # Ambiguous or no clear indication
+    # Advanced model comparison
+    config.model_comparison.statistical_tests = True
+    config.model_comparison.consensus_ranking = True
+    config.model_comparison.generate_comparison_plots = True
+    
+    return config

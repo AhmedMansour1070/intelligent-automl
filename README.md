@@ -122,30 +122,6 @@ The framework evaluates models using 35+ metrics across multiple categories:
 
 ---
 
-## Performance Benchmarks
-
-### Speed Comparison
-
-| Phase | Manual Process | Traditional AutoML | Intelligent AutoML | Improvement |
-|-------|---------------|-------------------|-------------------|-------------|
-| Data Analysis | 2-4 hours | 30 minutes | 5 minutes | 95% faster |
-| Pipeline Design | 4-8 hours | 1 hour | 10 minutes | 90% faster |
-| Model Training | 1-3 days | 4-8 hours | 1-2 hours | 85% faster |
-| Evaluation | 2-4 hours | 1 hour | 15 minutes | 90% faster |
-| **Total Project** | **3-5 days** | **1-2 days** | **4-6 hours** | **85% faster** |
-
-### Quality Comparison
-
-| Metric | Manual (Junior) | Manual (Senior) | Traditional AutoML | Intelligent AutoML |
-|--------|-----------------|-----------------|-------------------|-------------------|
-| Data Quality | 85% | 95% | 90% | 100% |
-| Feature Engineering | 70% | 90% | 75% | 95% |
-| Model Selection | 75% | 95% | 85% | 97% |
-| Evaluation Completeness | 60% | 90% | 70% | 100% |
-| **Overall Quality** | **72%** | **92%** | **80%** | **98%** |
-
----
-
 ## Installation and Setup
 
 ### System Requirements

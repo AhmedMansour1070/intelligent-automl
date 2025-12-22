@@ -2,16 +2,18 @@
 Version information for Intelligent AutoML Framework
 """
 
-__version__ = "1.0.0"
-__author__ = "Your Name"
-__email__ = "your.email@example.com"
+import re
+
+__version__ = "1.1.2"
+__author__ = "Ahmed Mansour"
+__email__ = "ahmedhany1070@gmail.com"
 __description__ = "The world's most intelligent automated machine learning framework"
 __url__ = "https://github.com/AhmedMansour1070/intelligent-automl"
 __license__ = "MIT"
-__copyright__ = "2024, Ahmed Mansour"
+__copyright__ = "2025, Ahmed Mansour"
 
-# Version info tuple
-VERSION = tuple(map(int, __version__.split('.')))
+_nums = re.match(r"^(\d+)\.(\d+)\.(\d+)", __version__)
+VERSION = tuple(int(x) for x in _nums.groups()) if _nums else (0, 0, 0)
 
 # Framework metadata
 FRAMEWORK_NAME = "Intelligent AutoML"
